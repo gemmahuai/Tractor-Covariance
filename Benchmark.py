@@ -1,3 +1,7 @@
+### usage: python Benchmark.py <which_calc for covariance err>
+# ex. python Benchmark.py 2
+
+
 import sys
 import astrometry
 import numpy as np
@@ -68,6 +72,7 @@ which_calc = int(sys.argv[1])
 
 ### COVARIANCE CALCULATION ####
 
+# which_calc = 0
 def Covariance_calc(umod, sigma, noise_map):
     """
     umodels = 3D array containing pixel weightings of each source
@@ -102,6 +107,7 @@ def Covariance_calc(umod, sigma, noise_map):
     # print('Covariance matrix = ', C)
     return(F, C, var)
 
+# which_calc = 1
 def Covariance_calc_rank1Decomp(umod, sigma, noise_map):
     """
     Another way of calculating matrix inverse, using Rank 1 decomposition, 
@@ -132,9 +138,68 @@ def Covariance_calc_rank1Decomp(umod, sigma, noise_map):
 
     return(F, C, var)
 
+# seems like it takes the most time to calculate the fisher information matrix. 
+# try avoiding loops
+
+## better fisher matrix calculation and better matrix inversion
+# which_calc = 2
+def Covariance_calc_rank1Decomp_vecF(umod, sigma, noise_map):
+
+    D = umod.shape[0]
+    sigma_squared = sigma**2
+
+    # Initialize Fisher information matrix
+    F = np.zeros((D + 1, D + 1))
+
+    # Vectorized computation for F[i, D] and F[D, i]
+    umod_sum = np.sum(umod * noise, axis=(1,2))
+    F[:D, D] = -umod_sum / sigma_squared
+    F[D, :D] = F[:D, D]
+
+    # Vectorized computation for F[i, j]
+    F[:D, :D] = -np.einsum('ijk,ljk->il', umod, umod) / sigma**2
+
+    # Matrix inversion
+    D_inv = 1/np.diag(F)[:-1]
+    z = F[-1][:-1]
+    u = D_inv * z
+    u = np.append(u, -1)
+    alpha = F[-1,-1]
+    rho = 1 / (alpha - np.dot(z, D_inv*z))
+    C = np.zeros_like(F) + rho * u * u
+    np.fill_diagonal(C, np.append(D_inv, 0))
+    var = -np.diag(C) #variance
+    return F, C, var
+
+# which_calc = 3
+def Covariance_calc_vecF(umod, sigma, noise_map):
+
+    D = umod.shape[0]
+    sigma_squared = sigma**2
+
+    # Initialize Fisher information matrix
+    F = np.zeros((D + 1, D + 1))
+
+    # Vectorized computation for F[i, D] and F[D, i]
+    umod_sum = np.sum(umod * noise, axis=(1,2))
+    F[:D, D] = -umod_sum / sigma_squared
+    F[D, :D] = F[:D, D]
+
+    # Vectorized computation for F[i, j]
+    F[:D, :D] = -np.einsum('ijk,ljk->il', umod, umod) / sigma**2
+
+    # check if F is invertible or not
+    if np.linalg.det(F)==0.:
+        print('F not invertible!')
+        C = np.inf + np.zeros_like(F)
+        var = -np.diag(C)
+    else:
+        C = np.linalg.inv(F)
+        var = -np.diag(C) #variance
+    return F, C, var
 
 
-### generate multiple psf's
+### --------------------------------- generate multiple psf's ------------------------------------
 
 def PSF_gen_multiple(N_psf, Coord, array_number, N_image, plot=False):
     """
@@ -224,9 +289,24 @@ if __name__ == '__main__':
 
         time_end = time.time()
         runtime_avg = (time_end - time_start) * 1e6 / num_runs; # us
+    
     elif which_calc == 1:
         for j in range(num_runs):
             Covariance_calc_rank1Decomp(umod, im_sigma, noise)
+
+        time_end = time.time()
+        runtime_avg = (time_end - time_start) * 1e6 / num_runs; # us
+    
+    elif which_calc == 2:
+        for j in range(num_runs):
+            Covariance_calc_rank1Decomp_vecF(umod, im_sigma, noise)
+
+        time_end = time.time()
+        runtime_avg = (time_end - time_start) * 1e6 / num_runs; # us
+    
+    elif which_calc == 3:
+        for j in range(num_runs):
+            Covariance_calc_vecF(umod, im_sigma, noise)
 
         time_end = time.time()
         runtime_avg = (time_end - time_start) * 1e6 / num_runs; # us
