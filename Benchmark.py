@@ -199,6 +199,49 @@ def Covariance_calc_vecF(umod, sigma, noise_map):
     return F, C, var
 
 
+### final version - handle errors
+def Covariance_calc_rank1Decomp_vecF_final(umod, sigma, noise_map):
+    D = umod.shape[0]
+    sigma_squared = sigma**2
+
+    # Initialize Fisher information matrix
+    F = np.zeros((D + 1, D + 1))
+
+    try:
+        # Vectorized computation for F[i, D] and F[D, i]
+        umod_sum = np.sum(umod * noise_map, axis=(1, 2))
+        F[:D, D] = -umod_sum / sigma_squared
+        F[D, :D] = F[:D, D]
+
+        # Vectorized computation for F[i, j]
+        F[:D, :D] = -np.einsum('ijk,ljk->il', umod, umod) / sigma_squared
+
+        # Matrix inversion
+        # Check for NaNs and Infs in the Fisher matrix
+        if np.any(np.isnan(F)) or np.any(np.isinf(F)):
+            raise ValueError("Fisher matrix contains NaNs or Infs.")
+
+        # Handle potential issues with diagonal inversion
+        D_inv = 1/np.diag(F)[:-1]
+        z = F[-1][:-1]
+        u = D_inv * z
+        u = np.append(u, -1)
+        alpha = F[-1,-1]
+        rho = 1 / (alpha - np.dot(z, D_inv*z))
+        if np.any(np.isnan(rho)) or np.any(np.isinf(rho)):
+            raise ValueError("Matrix inversion contains NaNs or Infs.")
+        
+        C = np.zeros_like(F) + rho * u * u
+        np.fill_diagonal(C, np.append(D_inv, 0))
+        
+        var = -np.diag(C) # Variance
+
+        return F, C, var
+    
+    except Exception as e:
+        print(f"Error in covariance calculation: {e}")
+        return None, None, None
+
 ### --------------------------------- generate multiple psf's ------------------------------------
 
 def PSF_gen_multiple(N_psf, Coord, array_number, N_image, plot=False):
@@ -307,6 +350,13 @@ if __name__ == '__main__':
     elif which_calc == 3:
         for j in range(num_runs):
             Covariance_calc_vecF(umod, im_sigma, noise)
+
+        time_end = time.time()
+        runtime_avg = (time_end - time_start) * 1e6 / num_runs; # us
+    
+    else:
+        for j in range(num_runs):
+            Covariance_calc_rank1Decomp_vecF_final(umod, im_sigma, noise)
 
         time_end = time.time()
         runtime_avg = (time_end - time_start) * 1e6 / num_runs; # us
